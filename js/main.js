@@ -1,7 +1,7 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Tabla de choques (aunque no la muestres)
+// Tabla de choques (aunque no la muestres; no afecta)
 const collisionTableBody = document.getElementById("collisionTableBody");
 
 // Stats
@@ -31,13 +31,13 @@ const PER_LEVEL = 10;
 const TOTAL_ELEMENTS = 150;
 const TOTAL_LEVELS = Math.ceil(TOTAL_ELEMENTS / PER_LEVEL);
 
-// ✅ sube más rápido desde el inicio
-const BASE_SPEED = 1.1;
+// ✅ Nivel 1 más lento
+const BASE_SPEED = 0.75;
 
-// ✅ incrementa más por nivel (antes 0.12)
-const SPEED_INC  = 0.30;
+// ✅ Incremento gradual por nivel
+const SPEED_INC  = 0.25;
 
-// ✅ rebote más suave
+// Rebote suave
 const RESTITUTION = 0.9;
 
 // Fade
@@ -48,14 +48,14 @@ const COLOR_NORMAL  = "#2563eb";
 const COLOR_HOVER   = "#22c55e";
 const COLOR_COLLIDE = "#ef4444";
 
-// Anti-trabado (cooldown por par)
+// Anti-trabado
 const COLLISION_COOLDOWN_MS = 80;
 const SEPARATION_SLOP = 0.5;
 
-// ✅ deja crecer la velocidad en niveles altos (antes 3.2)
+// Límite de velocidad
 const MAX_SPEED = 7.0;
 
-// ✅ Spawn más cerca para que “se vean” rápido (antes 40..180)
+// Spawn cerca del borde inferior
 const SPAWN_OFFSET_MIN = 8;
 const SPAWN_OFFSET_MAX = 55;
 // ======================================================
@@ -128,9 +128,11 @@ class Circle {
     this.radius = radius;
     this.mass = radius * radius;
 
-    // ✅ movimiento: siempre hacia arriba + variación lateral
+    // Movimiento: arriba + variación lateral
     this.dx = rand(-1.2, 1.2) * speed;
-    this.dy = -rand(1.0, 1.6) * speed;
+
+    // ✅ MÁS DESPACIO en nivel 1 (rango dy más bajo)
+    this.dy = -rand(0.75, 1.15) * speed;
 
     this.isColliding = false;
 
@@ -321,8 +323,6 @@ function spawnNextLevel() {
   for (let i = 0; i < count; i++) {
     const r = rand(20, 45);
     const x = rand(r, canvas.width - r);
-
-    // ✅ nacen “pegados” al borde inferior para que se vean ya
     const y = canvas.height + rand(SPAWN_OFFSET_MIN, SPAWN_OFFSET_MAX);
 
     circles.push(new Circle(nextId++, x, y, r, levelSpeed));
