@@ -1,15 +1,26 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Stats (panel)
+// Panel stats
 const killedCountEl  = document.getElementById("killedCount");
 const killedPctEl    = document.getElementById("killedPct");
+const escapedCountEl = document.getElementById("escapedCount");
+const escapedPctEl   = document.getElementById("escapedPct");
 const levelNowEl     = document.getElementById("levelNow");
 const speedNowEl     = document.getElementById("speedNow");
 const progressTextEl = document.getElementById("progressText");
 const progressBarEl  = document.getElementById("progressBar");
 
-// Toast UI (Bootstrap)
+// Navbar buttons
+const pauseBtn  = document.getElementById("pauseBtn");
+const pauseIcon = document.getElementById("pauseIcon");
+const pauseText = document.getElementById("pauseText");
+
+const muteBtn   = document.getElementById("muteBtn");
+const muteIcon  = document.getElementById("muteIcon");
+const muteText  = document.getElementById("muteText");
+
+// Toast
 const levelToastEl = document.getElementById("levelToast");
 const toastTitleEl = document.getElementById("toastTitle");
 const toastSpeedEl = document.getElementById("toastSpeed");
@@ -19,7 +30,6 @@ let levelToast = null;
 function resizeCanvas() {
   const window_height = window.innerHeight / 2;
   const window_width  = window.innerWidth  / 2;
-
   canvas.width = window_width;
   canvas.height = window_height;
   canvas.style.background = "#eaf6ff";
@@ -28,14 +38,14 @@ resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 // ===================================================
 
-// =================== CONFIG NEGOCIO ===================
+// =================== CONFIG ===================
 const PER_LEVEL = 10;
 const TOTAL_ELEMENTS = 150;
 const TOTAL_LEVELS = Math.ceil(TOTAL_ELEMENTS / PER_LEVEL);
 
-// Nivel 1 más lento + incremento por nivel
-const BASE_SPEED = 0.60;     // ✅ más despacio en nivel 1
-const SPEED_INC  = 0.22;     // ✅ sube por nivel (rápido pero controlado)
+// Nivel 1 lento + crecimiento
+const BASE_SPEED = 0.60;
+const SPEED_INC  = 0.22;
 
 // Física
 const RESTITUTION = 0.9;
@@ -53,26 +63,24 @@ const COLOR_COLLIDE = "#ef4444";
 // Anti-trabado
 const COLLISION_COOLDOWN_MS = 80;
 
-// Spawn rápido
+// Spawn (aparecen rápido al cambiar nivel)
 const SPAWN_OFFSET_MIN = 0;
 const SPAWN_OFFSET_MAX = 18;
 
-// Mezcla: cuando queden pocos, se agrega el siguiente nivel sin pausa
+// Mezcla (sin pausas)
 const MIX_AT = 2;
 
 // HUD
 const HUD_PAD = 12;
 
-// Flash al cambiar nivel
+// Flash cambio nivel
 const FLASH_DURATION_MS = 420;
 // ======================================================
 
-function rand(min, max) {
-  return Math.random() * (max - min) + min;
-}
-function clamp(v, a, b) {
-  return Math.max(a, Math.min(b, v));
-}
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function levelSpeed(level) { return BASE_SPEED + (level - 1) * SPEED_INC; }
+
 function clampSpeed(circle) {
   const v = Math.hypot(circle.dx, circle.dy);
   if (v > MAX_SPEED) {
@@ -81,9 +89,47 @@ function clampSpeed(circle) {
     circle.dy *= s;
   }
 }
-function levelSpeed(level) {
-  return BASE_SPEED + (level - 1) * SPEED_INC;
+
+// =================== PAUSE / MUTE ===================
+let paused = false;
+let muted = false;
+
+function setPauseUI() {
+  if (!pauseIcon || !pauseText) return;
+  if (paused) {
+    pauseIcon.className = "bi bi-play-fill me-1";
+    pauseText.textContent = "Reanudar";
+  } else {
+    pauseIcon.className = "bi bi-pause-fill me-1";
+    pauseText.textContent = "Pausar";
+  }
 }
+
+function setMuteUI() {
+  if (!muteIcon || !muteText) return;
+  if (muted) {
+    muteIcon.className = "bi bi-volume-mute-fill me-1";
+    muteText.textContent = "Unmute";
+  } else {
+    muteIcon.className = "bi bi-volume-up-fill me-1";
+    muteText.textContent = "Mute";
+  }
+}
+
+pauseBtn?.addEventListener("click", () => {
+  paused = !paused;
+  setPauseUI();
+});
+
+muteBtn?.addEventListener("click", () => {
+  muted = !muted;
+  setMuteUI();
+});
+
+// inicial
+setPauseUI();
+setMuteUI();
+// ===================================================
 
 // =================== SONIDO (WebAudio) ===================
 let audioCtx = null;
@@ -96,10 +142,11 @@ function ensureAudio() {
 }
 
 function beep(freq = 440, duration = 0.08, gain = 0.05) {
+  if (muted) return;
+
   ensureAudio();
   if (!audioCtx) return;
 
-  // Si el navegador la suspende, intenta resumir al primer gesto
   if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
 
   const osc = audioCtx.createOscillator();
@@ -127,7 +174,7 @@ canvas.addEventListener("pointerdown", () => {
 });
 // =========================================================
 
-// =================== TOAST HELPERS ===================
+// =================== TOAST ===================
 function initToast() {
   if (!levelToastEl || typeof bootstrap === "undefined") return;
   levelToast = bootstrap.Toast.getOrCreateInstance(levelToastEl, {
@@ -137,24 +184,30 @@ function initToast() {
 }
 function showLevelToast(level) {
   if (!levelToast || !toastTitleEl || !toastSpeedEl) return;
-  const spd = levelSpeed(level);
-
   toastTitleEl.textContent = `Nivel ${level} iniciado`;
-  toastSpeedEl.textContent = `Velocidad ${spd.toFixed(2)}`;
-
+  toastSpeedEl.textContent = `Velocidad ${levelSpeed(level).toFixed(2)}`;
   levelToast.show();
 }
 initToast();
-// ================================================
+// ===================================================
 
 // =================== FLASH ===================
 let flashUntil = 0;
-function triggerFlash(now) {
-  flashUntil = now + FLASH_DURATION_MS;
-}
-// =============================================
+function triggerFlash(now) { flashUntil = now + FLASH_DURATION_MS; }
+function drawFlash(now) {
+  if (now >= flashUntil) return;
+  const t = 1 - (flashUntil - now) / FLASH_DURATION_MS;
+  const alpha = (1 - t) * 0.22;
 
-// =================== MOUSE (ESCALA CORRECTA) ===================
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#22d3ee";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+// ===================================================
+
+// =================== MOUSE ===================
 let mouse = { x: -9999, y: -9999 };
 let hoverId = null;
 
@@ -193,11 +246,10 @@ canvas.addEventListener("click", () => {
   const c = circles.find(x => x.id === hoverId);
   if (c) {
     c.startFade();
-    // 🔊 sonido de eliminación
-    beep(520, 0.07, 0.05);
+    beep(520, 0.07, 0.05); // kill sound
   }
 });
-// ===================================================================
+// ===================================================
 
 class Circle {
   constructor(id, x, y, radius, speed) {
@@ -209,10 +261,7 @@ class Circle {
     this.radius = radius;
     this.mass = radius * radius;
 
-    // movimiento (arriba + direcciones distintas)
     this.dx = rand(-1.15, 1.15) * speed;
-
-    // ✅ un poquito más calmado para nivel 1
     this.dy = -rand(0.70, 1.05) * speed;
 
     this.isColliding = false;
@@ -235,7 +284,6 @@ class Circle {
     this.posX += this.dx;
     this.posY += this.dy;
 
-    // Rebote lateral
     if (this.posX + this.radius > canvas.width) {
       this.posX = canvas.width - this.radius;
       this.dx *= -1;
@@ -245,7 +293,6 @@ class Circle {
       this.dx *= -1;
     }
 
-    // Fade-out
     if (this.fading) {
       this.alpha -= FADE_RATE;
       if (this.alpha <= 0) {
@@ -254,7 +301,6 @@ class Circle {
       }
     }
 
-    // Sale por arriba
     if (this.posY + this.radius < 0) {
       return { dead: true, reason: "escaped" };
     }
@@ -344,29 +390,33 @@ function resolveCollision(a, b) {
   clampSpeed(b);
 }
 
-// =================== NIVELES + STATS ===================
+// =================== NIVELES + CONTADORES ===================
 let circles = [];
 
 let currentLevel = 1;
 let spawnedTotal = 0;
-let killedTotal = 0;
-let nextId = 1;
 
-// evita mezclar dos veces el mismo nivel
+let killedTotal = 0;
+let escapedTotal = 0;
+
+let nextId = 1;
 let injectedLevelUpTo = 1;
 
 function updateStatsUI() {
-  const pct = TOTAL_ELEMENTS > 0 ? (killedTotal / TOTAL_ELEMENTS) * 100 : 0;
-  const speed = levelSpeed(currentLevel);
+  const killedPct = TOTAL_ELEMENTS ? (killedTotal / TOTAL_ELEMENTS) * 100 : 0;
+  const escapedPct = TOTAL_ELEMENTS ? (escapedTotal / TOTAL_ELEMENTS) * 100 : 0;
 
   if (levelNowEl) levelNowEl.textContent = String(currentLevel);
-  if (speedNowEl) speedNowEl.textContent = speed.toFixed(2);
+  if (speedNowEl) speedNowEl.textContent = levelSpeed(currentLevel).toFixed(2);
 
   if (killedCountEl) killedCountEl.textContent = String(killedTotal);
-  if (killedPctEl) killedPctEl.textContent = `${pct.toFixed(1)}%`;
+  if (killedPctEl) killedPctEl.textContent = `${killedPct.toFixed(1)}%`;
+
+  if (escapedCountEl) escapedCountEl.textContent = String(escapedTotal);
+  if (escapedPctEl) escapedPctEl.textContent = `${escapedPct.toFixed(1)}%`;
 
   if (progressTextEl) progressTextEl.textContent = `${killedTotal} / ${TOTAL_ELEMENTS}`;
-  if (progressBarEl) progressBarEl.style.width = `${clamp(pct, 0, 100)}%`;
+  if (progressBarEl) progressBarEl.style.width = `${clamp(killedPct, 0, 100)}%`;
 }
 
 function addBatchForLevel(level) {
@@ -392,10 +442,14 @@ function resetGame() {
   circles = [];
   currentLevel = 1;
   injectedLevelUpTo = 1;
+
   spawnedTotal = 0;
   killedTotal = 0;
+  escapedTotal = 0;
+
   hoverId = null;
   nextId = 1;
+
   lastCollisionAt.clear();
 
   addBatchForLevel(1);
@@ -407,7 +461,6 @@ function resetGame() {
 
 resetGame();
 
-// mezcla: si quedan pocos, agrega el siguiente nivel YA
 function mixNextLevelIfNeeded(now) {
   if (spawnedTotal >= TOTAL_ELEMENTS) return;
   if (injectedLevelUpTo !== currentLevel) return;
@@ -422,27 +475,32 @@ function mixNextLevelIfNeeded(now) {
     showLevelToast(nextLevel);
     triggerFlash(now);
 
-    // 🔊 sonido al subir nivel
     beep(740, 0.09, 0.05);
     setTimeout(() => beep(980, 0.08, 0.04), 90);
   }
 }
 
-// =================== HUD DENTRO DEL CANVAS ===================
+// =================== HUD CANVAS ===================
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
 function drawHUD() {
   ctx.save();
 
-  // cajita semitransparente
+  const x = HUD_PAD, y = HUD_PAD, w = 250, h = 74;
+
   ctx.globalAlpha = 0.92;
   ctx.fillStyle = "rgba(0,0,0,0.25)";
   ctx.strokeStyle = "rgba(0,0,0,0.10)";
   ctx.lineWidth = 1;
-
-  const w = 220;
-  const h = 56;
-  const x = HUD_PAD;
-  const y = HUD_PAD;
-
   roundRect(ctx, x, y, w, h, 12);
   ctx.fill();
   ctx.stroke();
@@ -455,39 +513,38 @@ function drawHUD() {
 
   ctx.fillText(`Nivel: ${currentLevel} / ${TOTAL_LEVELS}`, x + 12, y + 10);
   ctx.fillText(`Eliminados: ${killedTotal} / ${TOTAL_ELEMENTS}`, x + 12, y + 30);
+  ctx.fillText(`Escapados: ${escapedTotal} / ${TOTAL_ELEMENTS}`, x + 12, y + 50);
+
+  // overlay "PAUSADO"
+  if (paused) {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 28px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.fillText("PAUSADO", canvas.width / 2, canvas.height / 2 - 10);
+
+    ctx.font = "500 14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.fillText("Presiona Reanudar para continuar", canvas.width / 2, canvas.height / 2 + 22);
+  }
 
   ctx.restore();
 }
-
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
-
-// =================== FLASH OVERLAY ===================
-function drawFlash(now) {
-  if (now >= flashUntil) return;
-  const t = 1 - (flashUntil - now) / FLASH_DURATION_MS;
-  const alpha = (1 - t) * 0.22; // se desvanece
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = "#22d3ee"; // cyan suave
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
-}
-// ====================================================
+// ===================================================
 
 // =================== LOOP ===================
 function animate(now = 0) {
   requestAnimationFrame(animate);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Si está pausado: solo dibuja HUD + flash (sin mover)
+  if (paused) {
+    drawHUD();
+    drawFlash(now);
+    return;
+  }
 
   for (const c of circles) c.isColliding = false;
 
@@ -523,27 +580,27 @@ function animate(now = 0) {
     if (res.dead) {
       circles.splice(i, 1);
       if (res.reason === "killed") killedTotal++;
+      if (res.reason === "escaped") escapedTotal++;
     }
   }
 
   // mezcla de nivel (sin pausas)
   mixNextLevelIfNeeded(now);
 
-  // failsafe
+  // failsafe si queda vacío
   if (circles.length === 0 && spawnedTotal < TOTAL_ELEMENTS) {
     const nextLevel = Math.min(currentLevel + 1, TOTAL_LEVELS);
     currentLevel = nextLevel;
     injectedLevelUpTo = nextLevel;
     addBatchForLevel(nextLevel);
+
     updateStatsUI();
     showLevelToast(nextLevel);
     triggerFlash(now);
   }
 
-  // HUD + flash
   drawHUD();
   drawFlash(now);
-
   updateStatsUI();
 }
 animate();
