@@ -1,9 +1,6 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Tabla de choques (aunque no la muestres; no afecta)
-const collisionTableBody = document.getElementById("collisionTableBody");
-
 // Stats
 const killedCountEl  = document.getElementById("killedCount");
 const killedPctEl    = document.getElementById("killedPct");
@@ -11,7 +8,12 @@ const levelNowEl     = document.getElementById("levelNow");
 const speedNowEl     = document.getElementById("speedNow");
 const progressTextEl = document.getElementById("progressText");
 const progressBarEl  = document.getElementById("progressBar");
-const levelsValueEl  = document.getElementById("levelsValue");
+
+// Toast UI (Bootstrap)
+const levelToastEl = document.getElementById("levelToast");
+const toastTitleEl = document.getElementById("toastTitle");
+const toastSpeedEl = document.getElementById("toastSpeed");
+let levelToast = null;
 
 // =================== CANVAS SIZE ===================
 function resizeCanvas() {
@@ -31,14 +33,14 @@ const PER_LEVEL = 10;
 const TOTAL_ELEMENTS = 150;
 const TOTAL_LEVELS = Math.ceil(TOTAL_ELEMENTS / PER_LEVEL);
 
-// ✅ Nivel 1 más lento
+// Velocidades (nivel 1 lento + crecimiento)
 const BASE_SPEED = 0.75;
-
-// ✅ Incremento gradual por nivel
 const SPEED_INC  = 0.25;
 
-// Rebote suave
+// Física
 const RESTITUTION = 0.9;
+const SEPARATION_SLOP = 0.5;
+const MAX_SPEED = 7.0;
 
 // Fade
 const FADE_RATE = 0.035;
@@ -50,14 +52,13 @@ const COLOR_COLLIDE = "#ef4444";
 
 // Anti-trabado
 const COLLISION_COOLDOWN_MS = 80;
-const SEPARATION_SLOP = 0.5;
 
-// Límite de velocidad
-const MAX_SPEED = 7.0;
+// Spawn rápido
+const SPAWN_OFFSET_MIN = 0;
+const SPAWN_OFFSET_MAX = 20;
 
-// Spawn cerca del borde inferior
-const SPAWN_OFFSET_MIN = 8;
-const SPAWN_OFFSET_MAX = 55;
+// ✅ Mezcla: cuando queden pocos, se agregan los del siguiente nivel
+const MIX_AT = 2;
 // ======================================================
 
 function rand(min, max) {
@@ -74,6 +75,31 @@ function clampSpeed(circle) {
     circle.dy *= s;
   }
 }
+function levelSpeed(level) {
+  return BASE_SPEED + (level - 1) * SPEED_INC;
+}
+
+// =================== TOAST HELPERS ===================
+function initToast() {
+  if (!levelToastEl || typeof bootstrap === "undefined") return;
+  levelToast = bootstrap.Toast.getOrCreateInstance(levelToastEl, {
+    delay: 1300,
+    autohide: true
+  });
+}
+
+function showLevelToast(level) {
+  if (!levelToastEl || !toastTitleEl || !toastSpeedEl || !levelToast) return;
+  const spd = levelSpeed(level);
+
+  toastTitleEl.textContent = `Nivel ${level} iniciado`;
+  toastSpeedEl.textContent = `Velocidad ${spd.toFixed(2)}`;
+
+  levelToast.show();
+}
+
+initToast();
+// ======================================================
 
 // =================== MOUSE (ESCALA CORRECTA) ===================
 let mouse = { x: -9999, y: -9999 };
@@ -83,7 +109,6 @@ function getMouseCanvasPos(e) {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
-
   return {
     x: (e.clientX - rect.left) * scaleX,
     y: (e.clientY - rect.top) * scaleY,
@@ -121,22 +146,17 @@ class Circle {
   constructor(id, x, y, radius, speed) {
     this.id = id;
     this.text = String(id);
-    this.hits = 0;
 
     this.posX = x;
     this.posY = y;
     this.radius = radius;
     this.mass = radius * radius;
 
-    // Movimiento: arriba + variación lateral
     this.dx = rand(-1.2, 1.2) * speed;
-
-    // ✅ MÁS DESPACIO en nivel 1 (rango dy más bajo)
     this.dy = -rand(0.75, 1.15) * speed;
 
     this.isColliding = false;
 
-    // fade
     this.alpha = 1;
     this.fading = false;
 
@@ -231,7 +251,6 @@ function resolveCollision(a, b) {
   const nx = dx / dist;
   const ny = dy / dist;
 
-  // separar
   if (dist < minDist) {
     const overlap = (minDist - dist) + SEPARATION_SLOP;
     const totalMass = a.mass + b.mass;
@@ -267,39 +286,19 @@ function resolveCollision(a, b) {
 
 // =================== NIVELES + STATS ===================
 let circles = [];
-let lastFrameUpdatedTable = 0;
 
 let currentLevel = 1;
 let spawnedTotal = 0;
 let killedTotal = 0;
-
 let nextId = 1;
 
-function buildCollisionTable() {
-  if (!collisionTableBody) return;
-  collisionTableBody.innerHTML = "";
-  for (const c of circles) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="mono">#${c.text}</td>
-      <td class="mono" id="hit-${c.id}">${c.hits}</td>
-    `;
-    collisionTableBody.appendChild(tr);
-  }
-}
-
-function updateCollisionTableFast() {
-  for (const c of circles) {
-    const cell = document.getElementById(`hit-${c.id}`);
-    if (cell) cell.textContent = c.hits;
-  }
-}
+// evita mezclar dos veces el mismo nivel
+let injectedLevelUpTo = 1;
 
 function updateStatsUI() {
   const pct = TOTAL_ELEMENTS > 0 ? (killedTotal / TOTAL_ELEMENTS) * 100 : 0;
-  const speed = BASE_SPEED + (currentLevel - 1) * SPEED_INC;
+  const speed = levelSpeed(currentLevel);
 
-  if (levelsValueEl) levelsValueEl.textContent = String(TOTAL_LEVELS);
   if (levelNowEl) levelNowEl.textContent = String(currentLevel);
   if (speedNowEl) speedNowEl.textContent = speed.toFixed(2);
 
@@ -310,45 +309,57 @@ function updateStatsUI() {
   if (progressBarEl) progressBarEl.style.width = `${clamp(pct, 0, 100)}%`;
 }
 
-function spawnNextLevel() {
+function addBatchForLevel(level) {
   if (spawnedTotal >= TOTAL_ELEMENTS) return;
 
   const remaining = TOTAL_ELEMENTS - spawnedTotal;
   const count = Math.min(PER_LEVEL, remaining);
 
-  const levelSpeed = BASE_SPEED + (currentLevel - 1) * SPEED_INC;
-
-  circles = [];
+  const spd = levelSpeed(level);
 
   for (let i = 0; i < count; i++) {
     const r = rand(20, 45);
     const x = rand(r, canvas.width - r);
     const y = canvas.height + rand(SPAWN_OFFSET_MIN, SPAWN_OFFSET_MAX);
-
-    circles.push(new Circle(nextId++, x, y, r, levelSpeed));
-    spawnedTotal++;
+    circles.push(new Circle(nextId++, x, y, r, spd));
   }
 
+  spawnedTotal += count;
   lastCollisionAt.clear();
-  buildCollisionTable();
-  updateStatsUI();
 }
 
 function resetGame() {
   circles = [];
   currentLevel = 1;
+  injectedLevelUpTo = 1;
   spawnedTotal = 0;
   killedTotal = 0;
   hoverId = null;
   nextId = 1;
-
   lastCollisionAt.clear();
 
-  spawnNextLevel();
+  addBatchForLevel(1);
   updateStatsUI();
+  showLevelToast(1);
 }
 
 resetGame();
+
+// mezcla: si quedan pocos, agrega el siguiente nivel YA
+function mixNextLevelIfNeeded() {
+  if (spawnedTotal >= TOTAL_ELEMENTS) return;
+  if (injectedLevelUpTo !== currentLevel) return;
+
+  if (circles.length <= MIX_AT) {
+    const nextLevel = Math.min(currentLevel + 1, TOTAL_LEVELS);
+    currentLevel = nextLevel;
+    injectedLevelUpTo = nextLevel;
+
+    addBatchForLevel(nextLevel);
+    updateStatsUI();
+    showLevelToast(nextLevel);
+  }
+}
 
 function animate(timestamp = 0) {
   requestAnimationFrame(animate);
@@ -373,8 +384,6 @@ function animate(timestamp = 0) {
           lastCollisionAt.set(key, timestamp);
           a.isColliding = true;
           b.isColliding = true;
-          a.hits += 1;
-          b.hits += 1;
         }
 
         resolveCollision(a, b);
@@ -394,19 +403,20 @@ function animate(timestamp = 0) {
     }
   }
 
-  // siguiente nivel
+  // ✅ mezcla de nivel (sin pausas)
+  mixNextLevelIfNeeded();
+
+  // failsafe por si queda vacío
   if (circles.length === 0 && spawnedTotal < TOTAL_ELEMENTS) {
-    currentLevel = Math.min(currentLevel + 1, TOTAL_LEVELS);
-    spawnNextLevel();
+    const nextLevel = Math.min(currentLevel + 1, TOTAL_LEVELS);
+    currentLevel = nextLevel;
+    injectedLevelUpTo = nextLevel;
+    addBatchForLevel(nextLevel);
+    updateStatsUI();
+    showLevelToast(nextLevel);
   }
 
   updateStatsUI();
-
-  // tabla (si existe)
-  if (timestamp - lastFrameUpdatedTable > 100) {
-    updateCollisionTableFast();
-    lastFrameUpdatedTable = timestamp;
-  }
 }
 
 animate();
