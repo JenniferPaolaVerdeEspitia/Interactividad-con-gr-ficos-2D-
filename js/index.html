@@ -45,6 +45,7 @@
       overflow: hidden;
       border: 1px solid var(--stroke);
       background: rgba(255,255,255,.03);
+      position: relative;
     }
 
     canvas{
@@ -181,7 +182,7 @@
           </div>
 
           <div class="small text-white-50 mt-3">
-            Hover: cambia color • Click: desaparece lentamente • Suben hacia arriba
+            Hover: cambia color • Click: desaparece lentamente • Suben hacia arriba • Sonido al eliminar
           </div>
 
         </div>
@@ -225,6 +226,11 @@
       </div>
     </div>
   </div>
+
+  <!-- 🔊 Audios (sin archivos externos) -->
+  <!-- Nota: estos son "beeps" por WebAudio desde JS, pero dejo los tags por si luego quieres mp3 -->
+  <audio id="sfxKill" preload="auto"></audio>
+  <audio id="sfxLevel" preload="auto"></audio>
 
   <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

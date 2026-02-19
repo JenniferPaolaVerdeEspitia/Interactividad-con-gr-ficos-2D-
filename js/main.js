@@ -1,7 +1,7 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Stats
+// Stats (panel)
 const killedCountEl  = document.getElementById("killedCount");
 const killedPctEl    = document.getElementById("killedPct");
 const levelNowEl     = document.getElementById("levelNow");
@@ -33,13 +33,13 @@ const PER_LEVEL = 10;
 const TOTAL_ELEMENTS = 150;
 const TOTAL_LEVELS = Math.ceil(TOTAL_ELEMENTS / PER_LEVEL);
 
-// Velocidades (nivel 1 lento + crecimiento)
-const BASE_SPEED = 0.75;
-const SPEED_INC  = 0.25;
+// Nivel 1 más lento + incremento por nivel
+const BASE_SPEED = 0.60;     // ✅ más despacio en nivel 1
+const SPEED_INC  = 0.22;     // ✅ sube por nivel (rápido pero controlado)
 
 // Física
 const RESTITUTION = 0.9;
-const SEPARATION_SLOP = 0.5;
+const SEPARATION_SLOP = 0.6;
 const MAX_SPEED = 7.0;
 
 // Fade
@@ -55,10 +55,16 @@ const COLLISION_COOLDOWN_MS = 80;
 
 // Spawn rápido
 const SPAWN_OFFSET_MIN = 0;
-const SPAWN_OFFSET_MAX = 20;
+const SPAWN_OFFSET_MAX = 18;
 
-// ✅ Mezcla: cuando queden pocos, se agregan los del siguiente nivel
+// Mezcla: cuando queden pocos, se agrega el siguiente nivel sin pausa
 const MIX_AT = 2;
+
+// HUD
+const HUD_PAD = 12;
+
+// Flash al cambiar nivel
+const FLASH_DURATION_MS = 420;
 // ======================================================
 
 function rand(min, max) {
@@ -79,17 +85,58 @@ function levelSpeed(level) {
   return BASE_SPEED + (level - 1) * SPEED_INC;
 }
 
+// =================== SONIDO (WebAudio) ===================
+let audioCtx = null;
+
+function ensureAudio() {
+  if (audioCtx) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  audioCtx = new Ctx();
+}
+
+function beep(freq = 440, duration = 0.08, gain = 0.05) {
+  ensureAudio();
+  if (!audioCtx) return;
+
+  // Si el navegador la suspende, intenta resumir al primer gesto
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = freq;
+
+  g.gain.value = 0;
+  g.gain.setValueAtTime(0, audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(gain, audioCtx.currentTime + 0.01);
+  g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+
+  osc.connect(g);
+  g.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration + 0.02);
+}
+
+canvas.addEventListener("pointerdown", () => {
+  // desbloquea audio al primer gesto
+  ensureAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+});
+// =========================================================
+
 // =================== TOAST HELPERS ===================
 function initToast() {
   if (!levelToastEl || typeof bootstrap === "undefined") return;
   levelToast = bootstrap.Toast.getOrCreateInstance(levelToastEl, {
-    delay: 1300,
+    delay: 1400,
     autohide: true
   });
 }
-
 function showLevelToast(level) {
-  if (!levelToastEl || !toastTitleEl || !toastSpeedEl || !levelToast) return;
+  if (!levelToast || !toastTitleEl || !toastSpeedEl) return;
   const spd = levelSpeed(level);
 
   toastTitleEl.textContent = `Nivel ${level} iniciado`;
@@ -97,9 +144,15 @@ function showLevelToast(level) {
 
   levelToast.show();
 }
-
 initToast();
-// ======================================================
+// ================================================
+
+// =================== FLASH ===================
+let flashUntil = 0;
+function triggerFlash(now) {
+  flashUntil = now + FLASH_DURATION_MS;
+}
+// =============================================
 
 // =================== MOUSE (ESCALA CORRECTA) ===================
 let mouse = { x: -9999, y: -9999 };
@@ -138,7 +191,11 @@ canvas.addEventListener("mouseleave", () => {
 canvas.addEventListener("click", () => {
   if (!hoverId) return;
   const c = circles.find(x => x.id === hoverId);
-  if (c) c.startFade();
+  if (c) {
+    c.startFade();
+    // 🔊 sonido de eliminación
+    beep(520, 0.07, 0.05);
+  }
 });
 // ===================================================================
 
@@ -152,8 +209,11 @@ class Circle {
     this.radius = radius;
     this.mass = radius * radius;
 
-    this.dx = rand(-1.2, 1.2) * speed;
-    this.dy = -rand(0.75, 1.15) * speed;
+    // movimiento (arriba + direcciones distintas)
+    this.dx = rand(-1.15, 1.15) * speed;
+
+    // ✅ un poquito más calmado para nivel 1
+    this.dy = -rand(0.70, 1.05) * speed;
 
     this.isColliding = false;
 
@@ -341,12 +401,14 @@ function resetGame() {
   addBatchForLevel(1);
   updateStatsUI();
   showLevelToast(1);
+  triggerFlash(performance.now());
+  beep(330, 0.10, 0.05);
 }
 
 resetGame();
 
 // mezcla: si quedan pocos, agrega el siguiente nivel YA
-function mixNextLevelIfNeeded() {
+function mixNextLevelIfNeeded(now) {
   if (spawnedTotal >= TOTAL_ELEMENTS) return;
   if (injectedLevelUpTo !== currentLevel) return;
 
@@ -358,10 +420,72 @@ function mixNextLevelIfNeeded() {
     addBatchForLevel(nextLevel);
     updateStatsUI();
     showLevelToast(nextLevel);
+    triggerFlash(now);
+
+    // 🔊 sonido al subir nivel
+    beep(740, 0.09, 0.05);
+    setTimeout(() => beep(980, 0.08, 0.04), 90);
   }
 }
 
-function animate(timestamp = 0) {
+// =================== HUD DENTRO DEL CANVAS ===================
+function drawHUD() {
+  ctx.save();
+
+  // cajita semitransparente
+  ctx.globalAlpha = 0.92;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.strokeStyle = "rgba(0,0,0,0.10)";
+  ctx.lineWidth = 1;
+
+  const w = 220;
+  const h = 56;
+  const x = HUD_PAD;
+  const y = HUD_PAD;
+
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#0b1220";
+  ctx.font = "600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  ctx.fillText(`Nivel: ${currentLevel} / ${TOTAL_LEVELS}`, x + 12, y + 10);
+  ctx.fillText(`Eliminados: ${killedTotal} / ${TOTAL_ELEMENTS}`, x + 12, y + 30);
+
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// =================== FLASH OVERLAY ===================
+function drawFlash(now) {
+  if (now >= flashUntil) return;
+  const t = 1 - (flashUntil - now) / FLASH_DURATION_MS;
+  const alpha = (1 - t) * 0.22; // se desvanece
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#22d3ee"; // cyan suave
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+// ====================================================
+
+// =================== LOOP ===================
+function animate(now = 0) {
   requestAnimationFrame(animate);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -380,12 +504,11 @@ function animate(timestamp = 0) {
         const key = pairKey(a.id, b.id);
         const last = lastCollisionAt.get(key) ?? -1e9;
 
-        if (timestamp - last >= COLLISION_COOLDOWN_MS) {
-          lastCollisionAt.set(key, timestamp);
+        if (now - last >= COLLISION_COOLDOWN_MS) {
+          lastCollisionAt.set(key, now);
           a.isColliding = true;
           b.isColliding = true;
         }
-
         resolveCollision(a, b);
       }
     }
@@ -403,10 +526,10 @@ function animate(timestamp = 0) {
     }
   }
 
-  // ✅ mezcla de nivel (sin pausas)
-  mixNextLevelIfNeeded();
+  // mezcla de nivel (sin pausas)
+  mixNextLevelIfNeeded(now);
 
-  // failsafe por si queda vacío
+  // failsafe
   if (circles.length === 0 && spawnedTotal < TOTAL_ELEMENTS) {
     const nextLevel = Math.min(currentLevel + 1, TOTAL_LEVELS);
     currentLevel = nextLevel;
@@ -414,9 +537,13 @@ function animate(timestamp = 0) {
     addBatchForLevel(nextLevel);
     updateStatsUI();
     showLevelToast(nextLevel);
+    triggerFlash(now);
   }
+
+  // HUD + flash
+  drawHUD();
+  drawFlash(now);
 
   updateStatsUI();
 }
-
 animate();
