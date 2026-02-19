@@ -1,10 +1,10 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-// Tabla de choques (se mantiene aunque ya no la muestres; no afecta)
+// Tabla de choques (aunque no la muestres)
 const collisionTableBody = document.getElementById("collisionTableBody");
 
-// Stats (si existen en tu HTML)
+// Stats
 const killedCountEl  = document.getElementById("killedCount");
 const killedPctEl    = document.getElementById("killedPct");
 const levelNowEl     = document.getElementById("levelNow");
@@ -20,7 +20,6 @@ function resizeCanvas() {
 
   canvas.width = window_width;
   canvas.height = window_height;
-
   canvas.style.background = "#eaf6ff";
 }
 resizeCanvas();
@@ -32,10 +31,13 @@ const PER_LEVEL = 10;
 const TOTAL_ELEMENTS = 150;
 const TOTAL_LEVELS = Math.ceil(TOTAL_ELEMENTS / PER_LEVEL);
 
-const BASE_SPEED = 0.60;
-const SPEED_INC  = 0.12;
+// ✅ sube más rápido desde el inicio
+const BASE_SPEED = 1.1;
 
-// ✅ rebote más suave (antes 1)
+// ✅ incrementa más por nivel (antes 0.12)
+const SPEED_INC  = 0.30;
+
+// ✅ rebote más suave
 const RESTITUTION = 0.9;
 
 // Fade
@@ -46,14 +48,16 @@ const COLOR_NORMAL  = "#2563eb";
 const COLOR_HOVER   = "#22c55e";
 const COLOR_COLLIDE = "#ef4444";
 
-// ✅ Anti-trabado (cooldown por par)
+// Anti-trabado (cooldown por par)
 const COLLISION_COOLDOWN_MS = 80;
+const SEPARATION_SLOP = 0.5;
 
-// ✅ Evita vibración por micro-penetraciones
-const SEPARATION_SLOP = 0.5; // px extra
+// ✅ deja crecer la velocidad en niveles altos (antes 3.2)
+const MAX_SPEED = 7.0;
 
-// ✅ Limita velocidad para que no explote con impulsos
-const MAX_SPEED = 3.2;
+// ✅ Spawn más cerca para que “se vean” rápido (antes 40..180)
+const SPAWN_OFFSET_MIN = 8;
+const SPAWN_OFFSET_MAX = 55;
 // ======================================================
 
 function rand(min, max) {
@@ -71,7 +75,7 @@ function clampSpeed(circle) {
   }
 }
 
-// =================== MOUSE (CORREGIDO CON ESCALA) ===================
+// =================== MOUSE (ESCALA CORRECTA) ===================
 let mouse = { x: -9999, y: -9999 };
 let hoverId = null;
 
@@ -122,18 +126,19 @@ class Circle {
     this.posX = x;
     this.posY = y;
     this.radius = radius;
-
     this.mass = radius * radius;
 
-    // movimiento (arriba + direcciones distintas)
-    this.dx = rand(-0.9, 0.9) * speed;
-    this.dy = -rand(0.7, 1.3) * speed;
+    // ✅ movimiento: siempre hacia arriba + variación lateral
+    this.dx = rand(-1.2, 1.2) * speed;
+    this.dy = -rand(1.0, 1.6) * speed;
 
     this.isColliding = false;
 
     // fade
     this.alpha = 1;
     this.fading = false;
+
+    clampSpeed(this);
   }
 
   contains(px, py) {
@@ -142,9 +147,7 @@ class Circle {
     return (dx * dx + dy * dy) <= (this.radius * this.radius);
   }
 
-  startFade() {
-    this.fading = true;
-  }
+  startFade() { this.fading = true; }
 
   update() {
     this.posX += this.dx;
@@ -169,7 +172,7 @@ class Circle {
       }
     }
 
-    // Si sale por arriba, se elimina
+    // Sale por arriba
     if (this.posY + this.radius < 0) {
       return { dead: true, reason: "escaped" };
     }
@@ -208,7 +211,7 @@ function distance(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// ✅ mapa de cooldown por par
+// cooldown por par
 const lastCollisionAt = new Map();
 function pairKey(aId, bId) {
   const x = Math.min(aId, bId);
@@ -223,11 +226,10 @@ function resolveCollision(a, b) {
   if (dist === 0) dist = 0.0001;
 
   const minDist = a.radius + b.radius;
-
   const nx = dx / dist;
   const ny = dy / dist;
 
-  // ✅ Separar con slop para evitar que se queden pegados
+  // separar
   if (dist < minDist) {
     const overlap = (minDist - dist) + SEPARATION_SLOP;
     const totalMass = a.mass + b.mass;
@@ -244,7 +246,6 @@ function resolveCollision(a, b) {
   const rvx = b.dx - a.dx;
   const rvy = b.dy - a.dy;
   const velAlongNormal = rvx * nx + rvy * ny;
-
   if (velAlongNormal > 0) return;
 
   const e = RESTITUTION;
@@ -258,7 +259,6 @@ function resolveCollision(a, b) {
   b.dx += impulseX / b.mass;
   b.dy += impulseY / b.mass;
 
-  // ✅ limita velocidad
   clampSpeed(a);
   clampSpeed(b);
 }
@@ -321,15 +321,15 @@ function spawnNextLevel() {
   for (let i = 0; i < count; i++) {
     const r = rand(20, 45);
     const x = rand(r, canvas.width - r);
-    const y = canvas.height + rand(40, 180);
+
+    // ✅ nacen “pegados” al borde inferior para que se vean ya
+    const y = canvas.height + rand(SPAWN_OFFSET_MIN, SPAWN_OFFSET_MAX);
 
     circles.push(new Circle(nextId++, x, y, r, levelSpeed));
     spawnedTotal++;
   }
 
-  // limpiar cooldowns para no crecer infinito
   lastCollisionAt.clear();
-
   buildCollisionTable();
   updateStatsUI();
 }
@@ -356,7 +356,7 @@ function animate(timestamp = 0) {
 
   for (const c of circles) c.isColliding = false;
 
-  // colisiones + contador (con cooldown)
+  // colisiones con cooldown
   for (let i = 0; i < circles.length; i++) {
     for (let j = i + 1; j < circles.length; j++) {
       const a = circles[i];
@@ -369,27 +369,22 @@ function animate(timestamp = 0) {
         const key = pairKey(a.id, b.id);
         const last = lastCollisionAt.get(key) ?? -1e9;
 
-        // ✅ evita múltiples “choques” por frame
         if (timestamp - last >= COLLISION_COOLDOWN_MS) {
           lastCollisionAt.set(key, timestamp);
-
           a.isColliding = true;
           b.isColliding = true;
-
           a.hits += 1;
           b.hits += 1;
         }
 
-        // ✅ aunque haya cooldown, igual resolvemos para que no se atraviesen
         resolveCollision(a, b);
       }
     }
   }
 
-  // update/draw + remover si muere o sale
+  // update/draw + remover
   for (let i = circles.length - 1; i >= 0; i--) {
     const c = circles[i];
-
     const res = c.update();
     c.draw(c.id === hoverId);
 
@@ -407,7 +402,7 @@ function animate(timestamp = 0) {
 
   updateStatsUI();
 
-  // tabla ~10 veces/seg
+  // tabla (si existe)
   if (timestamp - lastFrameUpdatedTable > 100) {
     updateCollisionTableFast();
     lastFrameUpdatedTable = timestamp;
